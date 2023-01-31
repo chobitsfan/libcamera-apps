@@ -1,0 +1,1 @@
+./libcamera-hello --framerate=10 --viewfinder-width=640 --viewfinder-height=480 --viewfinder-mode=1640:1232 --post-process-file ../assets/apriltagplnd.json
