@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
 #include <iostream>
 
 #include "core/libcamera_app.hpp"
@@ -43,8 +45,6 @@ private:
 	apriltag_detector_t *td;
 	apriltag_family_t *tf;
 	apriltag_detection_info_t det_info;
-
-	int uart_fd;
 };
 
 #define NAME "apriltagplnd"
@@ -67,45 +67,47 @@ void AprilTagPlndStage::Configure()
 	det_info.cx = 320;
 	det_info.cy = 240;
 	td = apriltag_detector_create();
-	td->quad_decimate = 1;
+	td->quad_decimate = 2;
     td->nthreads = 4;
 	tf = tagStandard41h12_create();
 	apriltag_detector_add_family(td, tf);
-
-	uart_fd = open("/dev/ttyAMA0", O_RDWR | O_NONBLOCK);
-    if (uart_fd < 0) {
-        std::cout << "can not open serial port\n";
-        return;
-    }
 }
 
 void AprilTagPlndStage::Teardown() 
 {
-	tagStandard41h12_destroy(tf);
     apriltag_detector_destroy(td);
+	tagStandard41h12_destroy(tf);
 }
 
 bool AprilTagPlndStage::Process(CompletedRequestPtr &completed_request)
 {
 	libcamera::Span<uint8_t> buffer = app_->Mmap(completed_request->buffers[stream_])[0];
-	uint8_t *ptr = (uint8_t *)buffer.data();
+	uint8_t *ptr = buffer.data();
 
 	image_u8_t img_header{CAM_RES_W, CAM_RES_H, CAM_RES_W, ptr};
-    apriltag_pose_t pose;
+
+	struct timespec start, stop;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
 	zarray_t *detections = apriltag_detector_detect(td, &img_header);
 	if (zarray_size(detections) > 0) {
         apriltag_detection_t *det;
         zarray_get(detections, 0, &det);
-		std::cout << "apriltag id " << det->id << " found\n";
+		//std::cout << "apriltag id " << det->id << " found\n";
 		if (det->id == 0) {
+			*(ptr+(int)(det->c[0])+CAM_RES_W*(int)(det->c[1])) = 255;
+
 			det_info.det = det;
+			apriltag_pose_t pose;
 			estimate_tag_pose(&det_info, &pose);
 			matd_destroy(pose.t);
             matd_destroy(pose.R);
 		}
 	}
 	apriltag_detections_destroy(detections);
+
+	clock_gettime(CLOCK_MONOTONIC, &stop);
+	printf("%d\n", (int)((stop.tv_sec-start.tv_sec)*1000+(stop.tv_nsec-start.tv_nsec)*1e-6));
 
 	// Constraints on the stride mean we always have multiple-of-4 bytes.
 	//for (unsigned int i = 0; i < buffer.size(); i += 4)
