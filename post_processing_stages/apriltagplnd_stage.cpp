@@ -10,12 +10,13 @@
 #include <apriltag/apriltag.h>
 #include <apriltag/apriltag_pose.h>
 #include <apriltag/tagStandard41h12.h>
-#include <termios.h> // Contains POSIX terminal control definitions
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <time.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <iostream>
 
 #include "core/libcamera_app.hpp"
@@ -45,11 +46,14 @@ private:
 	apriltag_detector_t *td;
 	apriltag_family_t *tf;
 	apriltag_detection_info_t det_info;
+
+	int stream_width;
+	int stream_height;
+	int ipc_fd;
+        struct sockaddr_in ipc_server;
 };
 
 #define NAME "apriltagplnd"
-#define CAM_RES_W 640
-#define CAM_RES_H 480
 
 char const *AprilTagPlndStage::Name() const
 {
@@ -59,7 +63,9 @@ char const *AprilTagPlndStage::Name() const
 void AprilTagPlndStage::Configure()
 {
 	stream_ = app_->GetMainStream();
-	std::cout << stream_->configuration().size.width << "x" << stream_->configuration().size.height << "\n";
+        StreamInfo info = app_->GetStreamInfo(stream_);
+        stream_width = info.width;
+        stream_height = info.height;
 
 	det_info.tagsize = 0.113;
 	det_info.fx = 496.25399994435088;
@@ -68,14 +74,22 @@ void AprilTagPlndStage::Configure()
 	det_info.cy = 240;
 	td = apriltag_detector_create();
 	td->quad_decimate = 2;
-    td->nthreads = 4;
+    	td->nthreads = 4;
 	tf = tagStandard41h12_create();
 	apriltag_detector_add_family(td, tf);
+
+	if ((ipc_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        	return;
+	}
+	memset(&ipc_server, 0, sizeof(ipc_server));
+	ipc_server.sin_family = AF_INET;
+	ipc_server.sin_port = htons(17510);
+	ipc_server.sin_addr.s_addr = inet_addr("127.0.0.1");
 }
 
 void AprilTagPlndStage::Teardown() 
 {
-    apriltag_detector_destroy(td);
+	apriltag_detector_destroy(td);
 	tagStandard41h12_destroy(tf);
 }
 
@@ -84,34 +98,28 @@ bool AprilTagPlndStage::Process(CompletedRequestPtr &completed_request)
 	libcamera::Span<uint8_t> buffer = app_->Mmap(completed_request->buffers[stream_])[0];
 	uint8_t *ptr = buffer.data();
 
-	image_u8_t img_header{CAM_RES_W, CAM_RES_H, CAM_RES_W, ptr};
-
-	struct timespec start, stop;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+	image_u8_t img_header{stream_width, stream_height, stream_width, ptr};
 
 	zarray_t *detections = apriltag_detector_detect(td, &img_header);
 	if (zarray_size(detections) > 0) {
-        apriltag_detection_t *det;
-        zarray_get(detections, 0, &det);
-		//std::cout << "apriltag id " << det->id << " found\n";
-		if (det->id == 0) {
-			*(ptr+(int)(det->c[0])+CAM_RES_W*(int)(det->c[1])) = 255;
+        	apriltag_detection_t *det;
+	        zarray_get(detections, 0, &det);
 
-			det_info.det = det;
-			apriltag_pose_t pose;
-			estimate_tag_pose(&det_info, &pose);
-			matd_destroy(pose.t);
-            matd_destroy(pose.R);
-		}
+		//std::cout << "apriltag id " << det->id << " found\n";
+
+		*(ptr + (int)(det->c[0]) + stream_width * (int)(det->c[1])) = 76;
+		*(ptr + stream_width * stream_height + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 84;
+		*(ptr + stream_width * stream_height + stream_width * stream_height / 4 + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 255;
+
+		det_info.det = det;
+		apriltag_pose_t pose;
+		estimate_tag_pose(&det_info, &pose);
+                double ipc_data[4] = { (double)det->id, pose.t->data[0],  pose.t->data[1],  pose.t->data[2] };
+                sendto(ipc_fd, ipc_data, sizeof(ipc_data), 0, (const struct sockaddr *)&ipc_server, sizeof(ipc_server));
+		matd_destroy(pose.t);
+		matd_destroy(pose.R);
 	}
 	apriltag_detections_destroy(detections);
-
-	clock_gettime(CLOCK_MONOTONIC, &stop);
-	printf("%d\n", (int)((stop.tv_sec-start.tv_sec)*1000+(stop.tv_nsec-start.tv_nsec)*1e-6));
-
-	// Constraints on the stride mean we always have multiple-of-4 bytes.
-	//for (unsigned int i = 0; i < buffer.size(); i += 4)
-	//	*(ptr++) ^= 0xffffffff;
 
 	return false;
 }
