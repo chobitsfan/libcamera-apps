@@ -25,6 +25,131 @@
 
 using Stream = libcamera::Stream;
 
+// Modified from ezdib by Robert Umbehant
+// https://github.com/wheresjames/ezdib
+static const char font_map_medium [] =
+{
+        // Default glyph
+        '.', 2, 10,     0x00, 0x3c, 0x00,
+
+        // Tab width
+        '\t', 10, 0,
+
+        // Space
+        ' ', 2, 0,
+
+        '!', 1, 10,     0xf6, 0x00,
+        '(', 3, 10,     0x2a, 0x48, 0x88, 0x00,
+        ')', 3, 10,     0x88, 0x92, 0xa0, 0x00,
+        ',', 2, 10,     0x00, 0x16, 0x00,
+        '-', 3, 10,     0x00, 0x70, 0x00, 0x00,
+        '/', 3, 10,     0x25, 0x25, 0x20, 0x00,
+        '@', 6, 10,     0x7a, 0x19, 0x6b, 0x9a, 0x07, 0x80, 0x00, 0x00,
+        '$', 5, 10,     0x23, 0xab, 0x47, 0x16, 0xae, 0x20, 0x00,
+        '#', 6, 10,     0x49, 0x2f, 0xd2, 0xfd, 0x24, 0x80, 0x00, 0x00,
+        '%', 7, 10,     0x43, 0x49, 0x20, 0x82, 0x49, 0x61, 0x00, 0x00, 0x00,
+        ':', 2, 10,     0x3c, 0xf0, 0x00,
+        '^', 3, 10,     0x54, 0x00, 0x00, 0x00,
+        '~', 5, 10,     0x00, 0x11, 0x51, 0x00, 0x00, 0x00, 0x00,
+
+        '0', 5, 10,     0x74, 0x73, 0x59, 0xc5, 0xc0, 0x00, 0x00,
+        '1', 3, 10,     0xc9, 0x24, 0xb8, 0x00,
+        '2', 5, 10,     0x74, 0x42, 0xe8, 0x43, 0xe0, 0x00, 0x00,
+        '3', 5, 10,     0x74, 0x42, 0xe0, 0xc5, 0xc0, 0x00, 0x00,
+        '4', 5, 10,     0x11, 0x95, 0x2f, 0x88, 0x40, 0x00, 0x00,
+        '5', 5, 10,     0xfc, 0x3c, 0x10, 0xc5, 0xc0, 0x00, 0x00,
+        '6', 5, 10,     0x74, 0x61, 0xe8, 0xc5, 0xc0, 0x00, 0x00,
+        '7', 5, 10,     0xfc, 0x44, 0x42, 0x10, 0x80, 0x00, 0x00,
+        '8', 5, 10,     0x74, 0x62, 0xe8, 0xc5, 0xc0, 0x00, 0x00,
+        '9', 5, 10,     0x74, 0x62, 0xf0, 0xc5, 0xc0, 0x00, 0x00,
+
+	0,
+};
+
+static const char* ezd_next_glyph( const char* pGlyph )
+{
+        int sz;
+
+        // Last glyph?
+        if ( !pGlyph || !*pGlyph )
+                return 0;
+
+        // Glyph size in bits
+        sz = pGlyph[ 1 ] * pGlyph[ 2 ];
+
+        // Return a pointer to the next glyph
+        return &pGlyph[ 3 + ( ( sz & 0x07 ) ? ( ( sz >> 3 ) + 1 ) : sz >> 3 ) ];
+}
+
+static const char* ezd_find_glyph(const char* x_pFt, const char ch )
+{
+	const char* pGlyph = x_pFt;
+
+        // Find the glyph
+        while ( pGlyph && *pGlyph )
+                if ( ch == *pGlyph )
+                        return pGlyph;
+                else
+                        pGlyph = ezd_next_glyph( pGlyph );
+
+        // First glyph is the default
+        return (const char*)x_pFt;
+}
+
+static void ezd_draw_bmp_yuv420( unsigned char *pImg, int x, int y, int sw, int pw,int bw, int bh, const char *pBmp)
+{
+        int w, h, lx = x;
+        unsigned char m = 0x80;
+
+        // Draw the glyph
+        for( h = 0; h < bh; h++ )
+        {
+                // Draw horz line
+                for( w = 0; w < bw; w++ )
+                {
+                        // Next glyph byte?
+                        if ( !m ) m = 0x80, pBmp++;
+                        // Is this pixel on?
+                        if ( *pBmp & m ) {
+				pImg[y * sw + lx ] = 0xff;
+		        }
+                        // Next bmp bit
+                        m >>= 1;
+                        // Next x pixel
+                        lx++;
+                }
+                // Reset x
+                lx = x;
+                // Reset y
+                y++;
+        }
+}
+
+__attribute__((unused)) static void ezd_text(unsigned char *img, char *x_pText, int x_nTextLen, int x, int y, int w, int h) {
+	int sw = w, pw = 1, i, mh = 0, lx = x;
+	const char *pGlyph;
+
+	for ( i = 0; i < x_nTextLen || ( 0 > x_nTextLen && x_pText[ i ] ); i++ ) {
+		// Get the specified glyph
+		pGlyph = ezd_find_glyph( font_map_medium, x_pText[ i ] );
+
+		// Other characters
+		// Draw this glyph if it's completely on the screen
+		if ( pGlyph[ 1 ] && pGlyph[ 2 ]
+			&& 0 <= lx && ( lx + pGlyph[ 1 ] ) < w
+			&& 0 <= y && ( y + pGlyph[ 2 ] ) < h )
+		{
+		    ezd_draw_bmp_yuv420(img, lx, y, sw, pw, pGlyph[ 1 ], pGlyph[ 2 ], &pGlyph[ 3 ]);
+		}
+
+		// Next character position
+		lx += 2 + pGlyph[ 1 ];
+
+		// Track max height
+		mh = ( pGlyph[ 2 ] > mh ) ? pGlyph[ 2 ] : mh;
+	}
+}
+
 class AprilTagPlndStage : public PostProcessingStage
 {
 public:
@@ -67,7 +192,7 @@ void AprilTagPlndStage::Configure()
         stream_width = info.width;
         stream_height = info.height;
 
-	det_info.tagsize = 0.113;
+	det_info.tagsize = 0.161;
 	det_info.fx = 496.25399994435088;
 	det_info.fy = 496.25399994435088;
 	det_info.cx = 320;
@@ -107,9 +232,12 @@ bool AprilTagPlndStage::Process(CompletedRequestPtr &completed_request)
 
 		//std::cout << "apriltag id " << det->id << " found\n";
 
-		*(ptr + (int)(det->c[0]) + stream_width * (int)(det->c[1])) = 76;
-		*(ptr + stream_width * stream_height + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 84;
-		*(ptr + stream_width * stream_height + stream_width * stream_height / 4 + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 255;
+		//*(ptr + (int)(det->c[0]) + stream_width * (int)(det->c[1])) = 76;
+		//*(ptr + stream_width * stream_height + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 84;
+		//*(ptr + stream_width * stream_height + stream_width * stream_height / 4 + (int)(det->c[0]/2) + stream_width / 2 * (int)(det->c[1]/2)) = 255;
+                char txt_buf[32];
+                sprintf(txt_buf, "%d", det->id);
+                ezd_text(ptr, txt_buf, -1, det->c[0], det->c[1], stream_width, stream_height);
 
 		det_info.det = det;
 		apriltag_pose_t pose;
