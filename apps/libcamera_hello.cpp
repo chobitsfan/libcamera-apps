@@ -6,6 +6,9 @@
  */
 
 #include <chrono>
+#include <ros/ros.h>
+#include <sensor_msgs/fill_image.h>
+#include <image_transport/image_transport.h>
 
 #include "core/libcamera_app.hpp"
 #include "core/options.hpp"
@@ -16,6 +19,12 @@ using namespace std::placeholders;
 
 static void event_loop(LibcameraApp &app)
 {
+	ros::NodeHandle ros_nh;
+    	ROS_INFO("libcamera_hello ros ok");
+        ros::NodeHandle nh;
+        image_transport::ImageTransport it(nh);
+        image_transport::Publisher pub = it.advertise("camera/image_raw", 1);
+
 	Options const *options = app.GetOptions();
 
 	app.OpenCamera();
@@ -45,12 +54,27 @@ static void event_loop(LibcameraApp &app)
 			return;
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
+
+		libcamera::Span<uint8_t> buffer = app.Mmap(completed_request->buffers[app.ViewfinderStream()])[0];
+		sensor_msgs::Image img;
+                img.header.stamp = ros::Time::now();
+                /*img.height = 400;
+                img.width = 640;
+                img.step = 640;
+                img.encoding = sensor_msgs::image_encodings::MONO8;
+                img.is_bigendian = 0;
+                &img.data[0] = buffer.data();*/
+                sensor_msgs::fillImage(img, sensor_msgs::image_encodings::MONO8, 400, 640, 640, buffer.data());
+		pub.publish(img);
+
 		app.ShowPreview(completed_request, app.ViewfinderStream());
 	}
 }
 
 int main(int argc, char *argv[])
 {
+	ros::init(argc, argv, "libcamera_hello", ros::init_options::AnonymousName | ros::init_options::NoSigintHandler);
+
 	try
 	{
 		LibcameraApp app;

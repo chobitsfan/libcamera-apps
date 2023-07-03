@@ -10,7 +10,7 @@ target_link_libraries(libcamera-vid libcamera_app encoders outputs)
 
 project(libcamera-hello)
 add_executable(libcamera-hello libcamera_hello.cpp)
-target_link_libraries(libcamera-hello libcamera_app)
+target_link_libraries(libcamera-hello libcamera_app roscpp rostime rosconsole roscpp_serialization image_transport)
 
 project(libcamera-raw)
 add_executable(libcamera-raw libcamera_raw.cpp)
