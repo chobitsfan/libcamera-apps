@@ -33,6 +33,14 @@ static void event_loop(LibcameraApp &app)
 
 	auto start_time = std::chrono::high_resolution_clock::now();
 
+	sensor_msgs::Image img;
+	img.height = 400;
+        img.width = 640;
+        img.step = 640;
+        img.encoding = sensor_msgs::image_encodings::MONO8;
+        img.is_bigendian = 0;
+        img.data.resize(640*400);
+
 	for (unsigned int count = 0; ; count++)
 	{
 		LibcameraApp::Msg msg = app.Wait();
@@ -56,18 +64,11 @@ static void event_loop(LibcameraApp &app)
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
 
 		libcamera::Span<uint8_t> buffer = app.Mmap(completed_request->buffers[app.ViewfinderStream()])[0];
-		sensor_msgs::Image img;
                 img.header.stamp = ros::Time::now();
-                /*img.height = 400;
-                img.width = 640;
-                img.step = 640;
-                img.encoding = sensor_msgs::image_encodings::MONO8;
-                img.is_bigendian = 0;
-                &img.data[0] = buffer.data();*/
-                sensor_msgs::fillImage(img, sensor_msgs::image_encodings::MONO8, 400, 640, 640, buffer.data());
+		memcpy(&img.data[0], buffer.data(), 640*400);
 		pub.publish(img);
 
-		app.ShowPreview(completed_request, app.ViewfinderStream());
+		//app.ShowPreview(completed_request, app.ViewfinderStream());
 	}
 }
 
