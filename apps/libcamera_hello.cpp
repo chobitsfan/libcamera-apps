@@ -19,8 +19,6 @@ using namespace std::placeholders;
 
 static void event_loop(LibcameraApp &app)
 {
-	ros::NodeHandle ros_nh;
-    	ROS_INFO("libcamera_hello ros ok");
         ros::NodeHandle nh;
         image_transport::ImageTransport it(nh);
         image_transport::Publisher pub = it.advertise("camera/image_raw", 1);
@@ -75,6 +73,7 @@ static void event_loop(LibcameraApp &app)
 int main(int argc, char *argv[])
 {
 	ros::init(argc, argv, "libcamera_hello", ros::init_options::AnonymousName | ros::init_options::NoSigintHandler);
+        ros::start();
 
 	try
 	{
@@ -91,7 +90,11 @@ int main(int argc, char *argv[])
 	catch (std::exception const &e)
 	{
 		LOG_ERROR("ERROR: *** " << e.what() << " ***");
+                ros::shutdown();
 		return -1;
 	}
+
+	ros::shutdown();
+
 	return 0;
 }
