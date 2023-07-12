@@ -9,6 +9,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/fill_image.h>
 #include <image_transport/image_transport.h>
+#include <time.h>
 
 #include "core/libcamera_app.hpp"
 #include "core/options.hpp"
@@ -23,23 +24,24 @@ static void event_loop(LibcameraApp &app)
         image_transport::ImageTransport it(nh);
         image_transport::Publisher pub = it.advertise("camera/image_raw", 1);
 
-	Options const *options = app.GetOptions();
-
 	app.OpenCamera();
 	app.ConfigureViewfinder();
 	app.StartCamera();
 
-	auto start_time = std::chrono::high_resolution_clock::now();
+    struct timespec boot_ts, epoch_ts;
+    clock_gettime(CLOCK_BOOTTIME, &boot_ts);
+    clock_gettime(CLOCK_REALTIME, &epoch_ts);
+    uint64_t boot_epoch_offset = epoch_ts.tv_sec * 1000000000 + epoch_ts.tv_nsec - (boot_ts.tv_sec * 1000000000 + boot_ts.tv_nsec);
 
 	sensor_msgs::Image img;
 	img.height = 400;
-        img.width = 640;
-        img.step = 640;
-        img.encoding = sensor_msgs::image_encodings::MONO8;
-        img.is_bigendian = 0;
-        img.data.resize(640*400);
+    img.width = 640;
+    img.step = 640;
+    img.encoding = sensor_msgs::image_encodings::MONO8;
+    img.is_bigendian = 0;
+    img.data.resize(640*400);
 
-	for (unsigned int count = 0; ; count++)
+	while (1)
 	{
 		LibcameraApp::Msg msg = app.Wait();
 		if (msg.type == LibcameraApp::MsgType::Timeout)
@@ -54,15 +56,16 @@ static void event_loop(LibcameraApp &app)
 		else if (msg.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 
-		LOG(2, "Viewfinder frame " << count);
-		auto now = std::chrono::high_resolution_clock::now();
-		if (options->timeout && now - start_time > std::chrono::milliseconds(options->timeout))
-			return;
-
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
 
+        auto sensor_ts = completed_request->metadata.get(controls::SensorTimestamp);
+        uint64_t sensor_ts_epoch = *sensor_ts + boot_epoch_offset;
+        ros::Time sensor_ros_ts(sensor_ts_epoch / 1000000000, sensor_ts_epoch % 1000000000);
+        //clock_gettime(CLOCK_BOOTTIME, &boot_ts);
+        //printf("%lu %lu\n", (uint64_t)*sensor_ts, boot_ts.tv_sec*1000000000+boot_ts.tv_nsec);
+
 		libcamera::Span<uint8_t> buffer = app.Mmap(completed_request->buffers[app.ViewfinderStream()])[0];
-                img.header.stamp = ros::Time::now();
+        img.header.stamp = sensor_ros_ts;
 		memcpy(&img.data[0], buffer.data(), 640*400);
 		pub.publish(img);
 
