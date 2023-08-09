@@ -22,7 +22,7 @@ static void event_loop(LibcameraApp &app)
 {
         ros::NodeHandle nh;
         image_transport::ImageTransport it(nh);
-        image_transport::Publisher pub = it.advertise("camera/image_raw", 1);
+        image_transport::Publisher pub = it.advertise("camera/image_raw", 10);
 
 	app.OpenCamera();
 	app.ConfigureViewfinder();
