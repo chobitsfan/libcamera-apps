@@ -1,0 +1,17 @@
+[Unit]
+Description=my libcamera-hello
+Wants=multi-user.target
+BindsTo=vins-mono.service
+After=multi-user.target vins-mono.service
+
+[Service]
+Type=simple 
+ExecStart=/home/pi/src/libcamera-apps/build/libcamera-hello --viewfinder-mode 640:400:8 --framerate 20 --hflip --vflip -n
+KillSignal=SIGINT
+User=pi
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=/home/pi/
+
+[Install]
+WantedBy=multi-user.target
