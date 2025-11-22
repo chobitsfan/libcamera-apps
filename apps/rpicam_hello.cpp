@@ -9,6 +9,8 @@
 
 #include "core/rpicam_app.hpp"
 #include "core/options.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/image.hpp"
 
 using namespace std::placeholders;
 
@@ -51,6 +53,8 @@ static void event_loop(RPiCamApp &app)
 
 int main(int argc, char *argv[])
 {
+    rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
+
 	try
 	{
 		RPiCamApp app;
@@ -68,5 +72,8 @@ int main(int argc, char *argv[])
 		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
+
+    rclcpp::shutdown();
+
 	return 0;
 }

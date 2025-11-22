@@ -1,3 +1,9 @@
+rclcpp_dep = dependency('rclcpp')
+std_msgs_dep = dependency('std_msgs')
+sensor_msgs_dep = dependency('sensor_msgs')
+ros2_sensor_inc = include_directories('/opt/ros/jazzy/include/sensor_msgs')
+ros2_std_inc = include_directories('/opt/ros/jazzy/include/std_msgs')
+
 rpicam_still = executable('rpicam-still', files('rpicam_still.cpp'),
                           include_directories : include_directories('..'),
                           dependencies: [libcamera_dep, boost_dep],
@@ -11,8 +17,8 @@ rpicam_vid = executable('rpicam-vid', files('rpicam_vid.cpp'),
                         install : true)
 
 rpicam_hello = executable('rpicam-hello', files('rpicam_hello.cpp'),
-                          include_directories : include_directories('..'),
-                          dependencies: libcamera_dep,
+                          include_directories : [include_directories('..'), ros2_std_inc, ros2_sensor_inc],
+                          dependencies: [libcamera_dep, rclcpp_dep, sensor_msgs_dep],
                           link_with : rpicam_app,
                           install : true)
 
