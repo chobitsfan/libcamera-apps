@@ -1,8 +1,12 @@
+cc = meson.get_compiler('cpp')
 rclcpp_dep = dependency('rclcpp')
 std_msgs_dep = dependency('std_msgs')
 sensor_msgs_dep = dependency('sensor_msgs')
 ros2_sensor_inc = include_directories('/opt/ros/jazzy/include/sensor_msgs')
 ros2_std_inc = include_directories('/opt/ros/jazzy/include/std_msgs')
+sensor_msgs_ts = cc.find_library('sensor_msgs__rosidl_typesupport_cpp', dirs: ['/opt/ros/jazzy/lib'])
+builtin_interfaces_ts = cc.find_library('builtin_interfaces__rosidl_typesupport_cpp', dirs: ['/opt/ros/jazzy/lib'])
+std_msgs_ts = cc.find_library('std_msgs__rosidl_typesupport_cpp', dirs: ['/opt/ros/jazzy/lib'])
 
 rpicam_still = executable('rpicam-still', files('rpicam_still.cpp'),
                           include_directories : include_directories('..'),
@@ -19,6 +23,12 @@ rpicam_vid = executable('rpicam-vid', files('rpicam_vid.cpp'),
 rpicam_hello = executable('rpicam-hello', files('rpicam_hello.cpp'),
                           include_directories : [include_directories('..'), ros2_std_inc, ros2_sensor_inc],
                           dependencies: [libcamera_dep, rclcpp_dep, sensor_msgs_dep],
+                          link_with : rpicam_app,
+                          install : true)
+
+rpicam_ros2 = executable('rpicam-ros2', files('rpicam_ros2.cpp'),
+                          include_directories : [include_directories('..'), ros2_std_inc, ros2_sensor_inc],
+                          dependencies: [libcamera_dep, rclcpp_dep, sensor_msgs_dep, sensor_msgs_ts, builtin_interfaces_ts, std_msgs_ts],
                           link_with : rpicam_app,
                           install : true)
 
