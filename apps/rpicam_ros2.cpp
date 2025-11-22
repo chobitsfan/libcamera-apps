@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
     auto ros_node = rclcpp::Node::make_shared("rpicam");
-    auto img_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("mono_left", rclcpp::QoS(2).best_effort().durability_volatile());
+    auto img_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("mono_left", rclcpp::QoS(1).best_effort().durability_volatile());
 
 	try
 	{
