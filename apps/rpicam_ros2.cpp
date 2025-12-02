@@ -6,7 +6,7 @@
  */
 
 #include <chrono>
-
+#include <fcntl.h>
 #include "core/rpicam_app.hpp"
 #include "core/options.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -16,7 +16,7 @@ using namespace std::placeholders;
 
 // The main event loop for the application.
 
-static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub)
+static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, uint32_t *sync_ts_ptr)
 {
 	Options const *options = app.GetOptions();
 
@@ -46,6 +46,8 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
 		else if (msg.type != RPiCamApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 
+        uint32_t sync_ts = *sync_ts_ptr;
+
 		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		if (options->Get().timeout && (now - start_time) > options->Get().timeout.value)
@@ -65,9 +67,11 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
     	libcamera::Span<uint8_t> buffer = w.Get()[0];
     	uint8_t *ptr = (uint8_t *)buffer.data();
         img_msg.data.assign(ptr, ptr+img_msg.height*img_msg.step);
-        auto ns = completed_request->metadata.get(controls::SensorTimestamp);
-        img_msg.header.stamp.sec = static_cast<int32_t>(*ns / 1000000000);
-        img_msg.header.stamp.nanosec = static_cast<uint32_t>(*ns % 1000000000);
+        //auto ns = completed_request->metadata.get(controls::SensorTimestamp);
+        //img_msg.header.stamp.sec = static_cast<int32_t>(*ns / 1000000000);
+        //img_msg.header.stamp.nanosec = static_cast<uint32_t>(*ns % 1000000000);
+        img_msg.header.stamp.sec = static_cast<int32_t>(sync_ts / 1000000);
+        img_msg.header.stamp.nanosec = static_cast<uint32_t>((sync_ts % 1000000) * 1000);
         img_pub->publish(img_msg);
 	}
 }
@@ -78,6 +82,13 @@ int main(int argc, char *argv[])
     auto ros_node = rclcpp::Node::make_shared("rpicam");
     auto img_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("mono_left", rclcpp::QoS(1).best_effort().durability_volatile());
 
+    int shm_fd = shm_open("my_imu_cam_sync", O_RDONLY, 0666);
+    if (shm_fd == -1) {
+        printf("shm_open (make sure Python writer is running first)\n");
+        return 1;
+    }
+    uint32_t *sync_ts_ptr = (uint32_t*)mmap(0, 4, PROT_READ, MAP_SHARED, shm_fd, 0);
+
 	try
 	{
 		RPiCamApp app;
@@ -87,7 +98,7 @@ int main(int argc, char *argv[])
 			if (options->Get().verbose >= 2)
 				options->Get().Print();
 
-			event_loop(app, img_pub);
+			event_loop(app, img_pub, sync_ts_ptr);
 		}
 	}
 	catch (std::exception const &e)
@@ -96,6 +107,8 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
+    munmap(sync_ts_ptr, 4);
+    close(shm_fd);
     rclcpp::shutdown();
 
 	return 0;
