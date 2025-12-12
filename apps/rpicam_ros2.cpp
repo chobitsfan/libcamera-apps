@@ -6,26 +6,30 @@
  */
 
 #include <chrono>
-#include <atomic>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "core/rpicam_app.hpp"
 #include "core/options.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
+//#define USE_SHARE_MEM_IPC
+
 using namespace std::placeholders;
 
-struct SharedData {
-    // It prevents "torn reads" (reading half old, half new data)
-    std::atomic<uint32_t> sync_ts;
-};
-
 // The main event loop for the application.
-
-static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, struct SharedData *shm_ptr)
+#ifdef USE_SHARE_MEM_IPC
+static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, uint32_t *sync_ts_ptr)
+#else
+static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, int fifo_fd)
+#endif
 {
-    static uint32_t prv_sync_ts = 0;
     static long int prv_cam_ts = 0;
+    //struct pollfd pfd;
+    //pfd.fd = fifo_fd;
+    //pfd.events = POLLIN;
 
 	Options const *options = app.GetOptions();
 
@@ -71,16 +75,36 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
 
         auto cam_ts = completed_request->metadata.get(controls::SensorTimestamp);
-        if (*cam_ts - prv_cam_ts < 40000000) {
+        if (*cam_ts - prv_cam_ts < 45000000) {
             printf("cam ts too close %ld\n", *cam_ts - prv_cam_ts);
+        } else if (prv_cam_ts > 0 && *cam_ts - prv_cam_ts > 55000000) {
+            printf("cam ts too far %ld\n", *cam_ts - prv_cam_ts);
         }
         prv_cam_ts = *cam_ts;
-        uint32_t sync_ts = atomic_load(&shm_ptr->sync_ts);
-        if (sync_ts == prv_sync_ts) {
-            printf("sync_ts not updated %u\n", sync_ts);
-            continue;
+
+#ifdef USE_SHARE_MEM_IPC
+        uint32_t sync_ts = *sync_ts_ptr;
+#else
+        uint32_t sync_ts;
+        ssize_t bytes_read = read(fifo_fd, &sync_ts, sizeof(sync_ts));
+        if (bytes_read != sizeof(sync_ts)) {
+            printf("fifo read failed\n");
+            return;
         }
-        prv_sync_ts = sync_ts;
+        /*bool poll_again = false;
+        do {
+            int ret = poll(&pfd, 1, 0);
+            if (ret > 0 && (pfd.revents & POLLIN)) {
+                bytes_read = read(fifo_fd, &sync_ts, sizeof(sync_ts));
+                if (bytes_read != sizeof(sync_ts)) {
+                    printf("fifo read failed\n");
+                    return;
+                }
+                poll_again = true;
+            } else poll_again = false;
+        } while (poll_again);*/
+        //printf("%d\n", sync_ts);
+#endif
 
 		//app.ShowPreview(completed_request, app.ViewfinderStream());
         BufferReadSync w(&app, completed_request->buffers[app.ViewfinderStream()]);
@@ -102,12 +126,23 @@ int main(int argc, char *argv[])
     auto ros_node = rclcpp::Node::make_shared("rpicam");
     auto img_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("mono_left", rclcpp::QoS(1).best_effort().durability_volatile());
 
+#ifdef USE_SHARE_MEM_IPC
     int shm_fd = shm_open("my_imu_cam_sync", O_RDONLY, 0666);
     if (shm_fd == -1) {
-        printf("shm_open (make sure Python writer is running first)\n");
-        return 1;
+        printf("shm_open (make sure writer is running first)\n");
+        return -1;
     }
-    struct SharedData *shm_ptr = (struct SharedData*)mmap(0, sizeof(struct SharedData), PROT_READ, MAP_SHARED, shm_fd, 0);
+    uint32_t *sync_ts_ptr = (uint32_t*)mmap(0, 4, PROT_READ, MAP_SHARED, shm_fd, 0);
+#else
+    const char* fifo_path = "/tmp/my_cam_ts_fifo";
+    mkfifo(fifo_path, 0666);
+    printf("opening fifo\n");
+    int fifo_fd = open(fifo_path, O_RDONLY);
+    if (fifo_fd < 0) {
+        printf("fail to open fifo\n");
+        return -1;
+    }
+#endif
 
 	try
 	{
@@ -117,8 +152,11 @@ int main(int argc, char *argv[])
 		{
 			if (options->Get().verbose >= 2)
 				options->Get().Print();
-
-			event_loop(app, img_pub, shm_ptr);
+#ifdef USE_SHARE_MEM_IPC
+            event_loop(app, img_pub, sync_ts_ptr);
+#else
+			event_loop(app, img_pub, fifo_fd);
+#endif
 		}
 	}
 	catch (std::exception const &e)
@@ -127,8 +165,12 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-    munmap(shm_ptr, sizeof(struct SharedData));
+#ifdef USE_SHARE_MEM_IPC
+    munmap(sync_ts_ptr, 4);
     close(shm_fd);
+#else
+    close(fifo_fd);
+#endif
     rclcpp::shutdown();
 
 	return 0;
