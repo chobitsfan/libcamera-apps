@@ -6,6 +6,7 @@
  */
 
 #include <chrono>
+#include <atomic>
 #include <fcntl.h>
 #include "core/rpicam_app.hpp"
 #include "core/options.hpp"
@@ -14,10 +15,18 @@
 
 using namespace std::placeholders;
 
+struct SharedData {
+    // It prevents "torn reads" (reading half old, half new data)
+    std::atomic<uint32_t> sync_ts;
+};
+
 // The main event loop for the application.
 
-static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, uint32_t *sync_ts_ptr)
+static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, struct SharedData *shm_ptr)
 {
+    static uint32_t prv_sync_ts = 0;
+    static long int prv_cam_ts = 0;
+
 	Options const *options = app.GetOptions();
 
 	app.OpenCamera();
@@ -46,8 +55,6 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
 		else if (msg.type != RPiCamApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 
-        uint32_t sync_ts = *sync_ts_ptr;
-
 		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		if (options->Get().timeout && (now - start_time) > options->Get().timeout.value)
@@ -62,6 +69,19 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
         }
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
+
+        auto cam_ts = completed_request->metadata.get(controls::SensorTimestamp);
+        if (*cam_ts - prv_cam_ts < 40000000) {
+            printf("cam ts too close %ld\n", *cam_ts - prv_cam_ts);
+        }
+        prv_cam_ts = *cam_ts;
+        uint32_t sync_ts = atomic_load(&shm_ptr->sync_ts);
+        if (sync_ts == prv_sync_ts) {
+            printf("sync_ts not updated %u\n", sync_ts);
+            continue;
+        }
+        prv_sync_ts = sync_ts;
+
 		//app.ShowPreview(completed_request, app.ViewfinderStream());
         BufferReadSync w(&app, completed_request->buffers[app.ViewfinderStream()]);
     	libcamera::Span<uint8_t> buffer = w.Get()[0];
@@ -87,7 +107,7 @@ int main(int argc, char *argv[])
         printf("shm_open (make sure Python writer is running first)\n");
         return 1;
     }
-    uint32_t *sync_ts_ptr = (uint32_t*)mmap(0, 4, PROT_READ, MAP_SHARED, shm_fd, 0);
+    struct SharedData *shm_ptr = (struct SharedData*)mmap(0, sizeof(struct SharedData), PROT_READ, MAP_SHARED, shm_fd, 0);
 
 	try
 	{
@@ -98,7 +118,7 @@ int main(int argc, char *argv[])
 			if (options->Get().verbose >= 2)
 				options->Get().Print();
 
-			event_loop(app, img_pub, sync_ts_ptr);
+			event_loop(app, img_pub, shm_ptr);
 		}
 	}
 	catch (std::exception const &e)
@@ -107,7 +127,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-    munmap(sync_ts_ptr, 4);
+    munmap(shm_ptr, sizeof(struct SharedData));
     close(shm_fd);
     rclcpp::shutdown();
 
