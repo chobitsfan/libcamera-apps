@@ -28,10 +28,6 @@ extern "C"
 #include "libavutil/timestamp.h"
 #include "libavutil/version.h"
 #include "libswresample/swresample.h"
-
-#if LIBAVCODEC_VERSION_MAJOR < 61
-#error "Error: libavcodec API version is too old for the libav encoder!"
-#endif
 }
 
 #include "encoder.hpp"
