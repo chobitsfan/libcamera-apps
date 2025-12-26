@@ -20,8 +20,6 @@ using namespace std::placeholders;
 // The main event loop for the application.
 static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub)
 {
-    static long int prv_cam_ts = 0;
-
 	Options const *options = app.GetOptions();
 
 	app.OpenCamera();
@@ -64,14 +62,6 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
         }
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
-
-        auto cam_ts = completed_request->metadata.get(controls::SensorTimestamp);
-        if (*cam_ts - prv_cam_ts < 45000000) {
-            printf("cam ts too close %ld\n", *cam_ts - prv_cam_ts);
-        } else if (prv_cam_ts > 0 && *cam_ts - prv_cam_ts > 55000000) {
-            printf("cam ts too far %ld\n", *cam_ts - prv_cam_ts);
-        }
-        prv_cam_ts = *cam_ts;
 
 		//app.ShowPreview(completed_request, app.ViewfinderStream());
         BufferReadSync w(&app, completed_request->buffers[app.ViewfinderStream()]);
