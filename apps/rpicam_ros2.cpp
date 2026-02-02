@@ -14,11 +14,10 @@
 #include "core/options.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
-
-using namespace std::placeholders;
+#include "std_msgs/msg/float32.hpp"
 
 // The main event loop for the application.
-static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub)
+static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& img_pub, rclcpp::Node::SharedPtr& ros_node)
 {
 	Options const *options = app.GetOptions();
 
@@ -72,6 +71,9 @@ static void event_loop(RPiCamApp &app, rclcpp::Publisher<sensor_msgs::msg::Image
         img_msg.header.stamp.sec = static_cast<int32_t>(*ns / 1000000000);
         img_msg.header.stamp.nanosec = static_cast<uint32_t>(*ns % 1000000000);
         img_pub->publish(img_msg);
+
+        // Process ROS2 callbacks
+        rclcpp::spin_some(ros_node);
 	}
 }
 
@@ -88,7 +90,18 @@ int main(int argc, char *argv[])
 		if (options->Parse(argc, argv))
 		{
 			if (options->Get().verbose >= 2) options->Get().Print();
-            event_loop(app, img_pub);
+            // Create a subscriber for dynamic gain control
+			auto gain_sub = ros_node->create_subscription<std_msgs::msg::Float32>(
+				"camera/gain",
+				rclcpp::QoS(1).best_effort(),
+				[&app](const std_msgs::msg::Float32::SharedPtr msg) {
+					libcamera::ControlList controls;
+					controls.set(libcamera::controls::AnalogueGain, msg->data);
+					app.SetControls(controls);
+					LOG(2, "Setting AnalogueGain to " << msg->data);
+				}
+			);
+            event_loop(app, img_pub, ros_node);
 		}
 	}
 	catch (std::exception const &e)
